@@ -12,19 +12,24 @@ function apply_Dell_fan_control_profile () {
   CURRENT_FAN_CONTROL_PROFILE="Dell default dynamic fan control profile"
 }
 
-# This function applies a user-specified static fan control profile
-function apply_user_fan_control_profile () {
-  # Use ipmitool to send the raw command to set fan control to user-specified value
+# Apply a manual (user-controlled) fan control profile at the given speed.
+# Usage: apply_manual_fan_control_profile <profile_label> <decimal_speed> <hex_speed>
+function apply_manual_fan_control_profile () {
+  local PROFILE_LABEL=$1
+  local DECIMAL_SPEED=$2
+  local HEX_SPEED=$3
+  # Switch to manual fan control, then set the fan speed.
   ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x01 0x00 > /dev/null
-  ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x02 0xff "$HEXADECIMAL_FAN_SPEED" > /dev/null
-  CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
+  ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x02 0xff "$HEX_SPEED" > /dev/null
+  CURRENT_FAN_CONTROL_PROFILE="$PROFILE_LABEL ($DECIMAL_SPEED%)"
 }
 
-# This function applies a user-specified interpolated fan control profile
+function apply_user_fan_control_profile () {
+  apply_manual_fan_control_profile "User static fan control profile" "$DECIMAL_FAN_SPEED" "$HEXADECIMAL_FAN_SPEED"
+}
+
 function apply_fan_speed_interpolation_fan_control_profile () {
-  ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x01 0x00 > /dev/null
-  ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x02 0xff "$HEXADECIMAL_CURRENT_FAN_SPEED" > /dev/null
-  CURRENT_FAN_CONTROL_PROFILE="Interpolated fan control profile ($DECIMAL_CURRENT_FAN_SPEED%)"
+  apply_manual_fan_control_profile "Interpolated fan control profile" "$DECIMAL_CURRENT_FAN_SPEED" "$HEXADECIMAL_CURRENT_FAN_SPEED"
 }
 
 # Convert DECIMAL_NUMBER to hexadecimal
@@ -51,11 +56,10 @@ function retrieve_temperatures () {
   local DATA
   DATA=$(ipmitool "${IPMITOOL_ARGS[@]}" sdr type temperature | grep degrees)
 
-  # Parse CPU data. grep -Po outputs one match per line; previously the code
-  # relied on bash word-splitting to flatten the lines, which awk would then
-  # column-index. Use explicit line selection so quoting is safe.
+  # Extract the digits immediately before " degrees C". This avoids the
+  # earlier `\d{2}` regex which would have parsed 100°C as "10".
   local CPU_DATA
-  CPU_DATA=$(echo "$DATA" | grep "3\." | grep -Po '\d{2}')
+  CPU_DATA=$(echo "$DATA" | grep "3\." | grep -Po '\d+(?= degrees C)')
   CPU1_TEMPERATURE=$(echo "$CPU_DATA" | sed -n 1p)
   if $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
   then
@@ -65,12 +69,12 @@ function retrieve_temperatures () {
   fi
 
   # Parse inlet temperature data
-  INLET_TEMPERATURE=$(echo "$DATA" | grep Inlet | grep -Po '\d{2}' | tail -1)
+  INLET_TEMPERATURE=$(echo "$DATA" | grep Inlet | grep -Po '\d+(?= degrees C)' | tail -1)
 
   # If exhaust temperature sensor is present, parse its temperature data
   if $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT
   then
-    EXHAUST_TEMPERATURE=$(echo "$DATA" | grep Exhaust | grep -Po '\d{2}' | tail -1)
+    EXHAUST_TEMPERATURE=$(echo "$DATA" | grep Exhaust | grep -Po '\d+(?= degrees C)' | tail -1)
   else
     EXHAUST_TEMPERATURE="-"
   fi
@@ -143,3 +147,21 @@ function get_Dell_server_model () {
 # Define functions to check if CPU 1 and CPU 2 temperatures are above the threshold
 function CPU1_OVERHEAT() { [ "$CPU1_TEMPERATURE" -gt "$CPU_TEMPERATURE_THRESHOLD" ]; }
 function CPU2_OVERHEAT() { [ "$CPU2_TEMPERATURE" -gt "$CPU_TEMPERATURE_THRESHOLD" ]; }
+
+# Populate the global IPMITOOL_ARGS array based on IDRAC_HOST. Used by both
+# the main controller and the healthcheck so the LAN/local setup stays
+# consistent across entry points.
+function set_iDRAC_login_args () {
+  if [[ $IDRAC_HOST == "local" ]]
+  then
+    # Check that the Docker host IPMI device (the iDRAC) has been exposed to the Docker container
+    if [ ! -e "/dev/ipmi0" ] && [ ! -e "/dev/ipmi/0" ] && [ ! -e "/dev/ipmidev/0" ]; then
+      echo "/!\ Could not open device at /dev/ipmi0 or /dev/ipmi/0 or /dev/ipmidev/0, check that you added the device to your Docker container or stop using local mode. Exiting." >&2
+      exit 1
+    fi
+    IPMITOOL_ARGS=(-I open)
+  else
+    echo "iDRAC/IPMI username: $IDRAC_USERNAME"
+    IPMITOOL_ARGS=(-I lanplus -H "$IDRAC_HOST" -U "$IDRAC_USERNAME" -P "$IDRAC_PASSWORD")
+  fi
+}

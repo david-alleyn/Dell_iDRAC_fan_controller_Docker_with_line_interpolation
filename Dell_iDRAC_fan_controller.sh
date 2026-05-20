@@ -1,16 +1,22 @@
 #!/bin/bash
 
-# Enable strict bash mode to stop the script if an uninitialized variable is used, if a command fails, or if a command with a pipe fails
-# Not working in some setups : https://github.com/tigerblue77/Dell_iDRAC_fan_controller/issues/48
-# set -euo pipefail
+# `set -e` is intentionally omitted (some ipmitool calls return non-zero in
+# expected paths — see https://github.com/tigerblue77/Dell_iDRAC_fan_controller/issues/48).
+# `-u` catches unset variables (use ${VAR:-default} or default below to opt out).
+# `-o pipefail` makes a pipeline's exit status reflect any failing stage.
 
 source functions.sh
 
-# Trap the signals for container exit and run graceful_exit function
+# Default the optional env vars BEFORE enabling `set -u`, so unset values fall
+# back to sensible defaults instead of aborting.
+KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT=${KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT:-false}
+HIGH_FAN_SPEED=${HIGH_FAN_SPEED:-}
+CPU_TEMPERATURE_THRESHOLD_FOR_FAN_SPEED_INTERPOLATION=${CPU_TEMPERATURE_THRESHOLD_FOR_FAN_SPEED_INTERPOLATION:-}
+
+# Trap the signals for graceful exit (Docker stop / Ctrl+C / kill).
 trap 'graceful_exit' SIGINT SIGQUIT SIGTERM
 
-# Apply safe default for bare-metal runs where the Dockerfile ENV isn't in effect
-KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT=${KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT:-false}
+set -uo pipefail
 
 # Prepare, format and define initial variables
 
@@ -38,21 +44,7 @@ else
   DECIMAL_HIGH_FAN_SPEED=$(printf '%d' "$HIGH_FAN_SPEED")
 fi
 
-# Check if the iDRAC host is set to 'local' or not then build the ipmitool arguments accordingly.
-# IPMITOOL_ARGS is an array so word-splitting is preserved without unquoted expansion.
-if [[ $IDRAC_HOST == "local" ]]
-then
-  # Check that the Docker host IPMI device (the iDRAC) has been exposed to the Docker container
-  if [ ! -e "/dev/ipmi0" ] && [ ! -e "/dev/ipmi/0" ] && [ ! -e "/dev/ipmidev/0" ]; then
-    echo "/!\ Could not open device at /dev/ipmi0 or /dev/ipmi/0 or /dev/ipmidev/0, check that you added the device to your Docker container or stop using local mode. Exiting." >&2
-    exit 1
-  fi
-  IPMITOOL_ARGS=(-I open)
-else
-  echo "iDRAC/IPMI username: $IDRAC_USERNAME"
-  #echo "iDRAC/IPMI password: $IDRAC_PASSWORD"
-  IPMITOOL_ARGS=(-I lanplus -H "$IDRAC_HOST" -U "$IDRAC_USERNAME" -P "$IDRAC_PASSWORD")
-fi
+set_iDRAC_login_args
 
 get_Dell_server_model
 
