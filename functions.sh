@@ -1,4 +1,10 @@
+# shellcheck shell=bash
 # Define global functions
+
+# These variables are set inside functions and read by the sourcing script.
+# shellcheck disable=SC2034
+declare CURRENT_FAN_CONTROL_PROFILE INLET_TEMPERATURE EXHAUST_TEMPERATURE
+
 # This function applies Dell's default dynamic fan control profile
 function apply_Dell_fan_control_profile () {
   # Use ipmitool to send the raw command to set fan control to Dell default
@@ -26,7 +32,8 @@ function apply_fan_speed_interpolation_fan_control_profile () {
 # Returns : hexadecimal value of DECIMAL_NUMBER
 function convert_decimal_value_to_hexadecimal () {
   local DECIMAL_NUMBER=$1
-  local HEXADECIMAL_NUMBER=$(printf '0x%02x' $DECIMAL_NUMBER)
+  local HEXADECIMAL_NUMBER
+  HEXADECIMAL_NUMBER=$(printf '0x%02x' $DECIMAL_NUMBER)
   echo $HEXADECIMAL_NUMBER
 }
 
@@ -41,10 +48,12 @@ function retrieve_temperatures () {
   local IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT=$1
   local IS_CPU2_TEMPERATURE_SENSOR_PRESENT=$2
 
-  local DATA=$(ipmitool -I $IDRAC_LOGIN_STRING sdr type temperature | grep degrees)
+  local DATA
+  DATA=$(ipmitool -I $IDRAC_LOGIN_STRING sdr type temperature | grep degrees)
 
   # Parse CPU data
-  local CPU_DATA=$(echo "$DATA" | grep "3\." | grep -Po '\d{2}')
+  local CPU_DATA
+  CPU_DATA=$(echo "$DATA" | grep "3\." | grep -Po '\d{2}')
   CPU1_TEMPERATURE=$(echo $CPU_DATA | awk '{print $1;}')
   if $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
   then
@@ -109,9 +118,8 @@ function graceful_exit () {
 
 # Helps debugging when people are posting their output
 function get_Dell_server_model () {
-  IPMI_FRU_content=$(ipmitool -I $IDRAC_LOGIN_STRING fru 2>/dev/null) # FRU stands for "Field Replaceable Unit"
-
-  if [ $? -ne 0 ]; then
+  # FRU stands for "Field Replaceable Unit"
+  if ! IPMI_FRU_content=$(ipmitool -I $IDRAC_LOGIN_STRING fru 2>/dev/null); then
     echo "Failed to retrieve iDRAC data, please check IP and credentials." >&2
     return
   fi

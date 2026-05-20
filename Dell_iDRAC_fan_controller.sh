@@ -33,15 +33,9 @@ then
 else
   readonly FAN_SPEED_INTERPOLATION_ENABLED=true
 
-  # Check if HIGH_FAN_SPEED variable is in hexadecimal format. If not, convert it to hexadecimal
-  if [[ $HIGH_FAN_SPEED == 0x* ]]
-  then
-    DECIMAL_HIGH_FAN_SPEED=$(printf '%d' $HIGH_FAN_SPEED)
-    HEXADECIMAL_HIGH_FAN_SPEED=$HIGH_FAN_SPEED
-  else
-    DECIMAL_HIGH_FAN_SPEED=$HIGH_FAN_SPEED
-    HEXADECIMAL_HIGH_FAN_SPEED=$(convert_decimal_value_to_hexadecimal $HIGH_FAN_SPEED)
-  fi
+  # printf '%d' accepts both decimal and 0x-prefixed hex input, so we don't
+  # need to branch on the format. HEXADECIMAL_HIGH_FAN_SPEED is not used.
+  DECIMAL_HIGH_FAN_SPEED=$(printf '%d' $HIGH_FAN_SPEED)
 fi
 
 # Check if the iDRAC host is set to 'local' or not then set the IDRAC_LOGIN_STRING accordingly
