@@ -9,6 +9,9 @@ source functions.sh
 # Trap the signals for container exit and run graceful_exit function
 trap 'graceful_exit' SIGINT SIGQUIT SIGTERM
 
+# Apply safe default for bare-metal runs where the Dockerfile ENV isn't in effect
+KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT=${KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT:-false}
+
 # Prepare, format and define initial variables
 
 # readonly DELL_FRESH_AIR_COMPLIANCE=45
