@@ -19,11 +19,11 @@ KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT=${KEEP_THIRD_PARTY_PCI
 # Check if FAN_SPEED variable is in hexadecimal format. If not, convert it to hexadecimal
 if [[ $FAN_SPEED == 0x* ]]
 then
-  DECIMAL_FAN_SPEED=$(printf '%d' $FAN_SPEED)
+  DECIMAL_FAN_SPEED=$(printf '%d' "$FAN_SPEED")
   HEXADECIMAL_FAN_SPEED=$FAN_SPEED
 else
   DECIMAL_FAN_SPEED=$FAN_SPEED
-  HEXADECIMAL_FAN_SPEED=$(convert_decimal_value_to_hexadecimal $FAN_SPEED)
+  HEXADECIMAL_FAN_SPEED=$(convert_decimal_value_to_hexadecimal "$FAN_SPEED")
 fi
 
 # Check if fan speed interpolation is enabled
@@ -35,10 +35,11 @@ else
 
   # printf '%d' accepts both decimal and 0x-prefixed hex input, so we don't
   # need to branch on the format. HEXADECIMAL_HIGH_FAN_SPEED is not used.
-  DECIMAL_HIGH_FAN_SPEED=$(printf '%d' $HIGH_FAN_SPEED)
+  DECIMAL_HIGH_FAN_SPEED=$(printf '%d' "$HIGH_FAN_SPEED")
 fi
 
-# Check if the iDRAC host is set to 'local' or not then set the IDRAC_LOGIN_STRING accordingly
+# Check if the iDRAC host is set to 'local' or not then build the ipmitool arguments accordingly.
+# IPMITOOL_ARGS is an array so word-splitting is preserved without unquoted expansion.
 if [[ $IDRAC_HOST == "local" ]]
 then
   # Check that the Docker host IPMI device (the iDRAC) has been exposed to the Docker container
@@ -46,11 +47,11 @@ then
     echo "/!\ Could not open device at /dev/ipmi0 or /dev/ipmi/0 or /dev/ipmidev/0, check that you added the device to your Docker container or stop using local mode. Exiting." >&2
     exit 1
   fi
-  IDRAC_LOGIN_STRING='open'
+  IPMITOOL_ARGS=(-I open)
 else
   echo "iDRAC/IPMI username: $IDRAC_USERNAME"
   #echo "iDRAC/IPMI password: $IDRAC_PASSWORD"
-  IDRAC_LOGIN_STRING="lanplus -H $IDRAC_HOST -U $IDRAC_USERNAME -P $IDRAC_PASSWORD"
+  IPMITOOL_ARGS=(-I lanplus -H "$IDRAC_HOST" -U "$IDRAC_USERNAME" -P "$IDRAC_PASSWORD")
 fi
 
 get_Dell_server_model
@@ -109,7 +110,7 @@ fi
 # Start monitoring
 while true; do
   # Sleep for the specified interval before taking another reading
-  sleep $CHECK_INTERVAL &
+  sleep "$CHECK_INTERVAL" &
   SLEEP_PROCESS_PID=$!
 
   retrieve_temperatures $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
@@ -152,13 +153,13 @@ while true; do
       HIGHEST_CPU_TEMPERATURE=$CPU1_TEMPERATURE
       if $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
       then
-        if [ $CPU2_TEMPERATURE -gt $CPU1_TEMPERATURE ]; 
+        if [ "$CPU2_TEMPERATURE" -gt "$CPU1_TEMPERATURE" ];
         then
           HIGHEST_CPU_TEMPERATURE=$CPU2_TEMPERATURE
         fi
       fi
       
-      if [ $HIGHEST_CPU_TEMPERATURE -gt $CPU_TEMPERATURE_THRESHOLD_FOR_FAN_SPEED_INTERPOLATION ]; 
+      if [ "$HIGHEST_CPU_TEMPERATURE" -gt "$CPU_TEMPERATURE_THRESHOLD_FOR_FAN_SPEED_INTERPOLATION" ];
       then
         #
         # F1 - lower fan speed
@@ -182,7 +183,7 @@ while true; do
         fi
         DECIMAL_CURRENT_FAN_SPEED="$((DECIMAL_FAN_SPEED + FAN_VALUE_TO_ADD))"
       fi
-      HEXADECIMAL_CURRENT_FAN_SPEED=$(convert_decimal_value_to_hexadecimal $DECIMAL_CURRENT_FAN_SPEED)
+      HEXADECIMAL_CURRENT_FAN_SPEED=$(convert_decimal_value_to_hexadecimal "$DECIMAL_CURRENT_FAN_SPEED")
       apply_fan_speed_interpolation_fan_control_profile
     else
       apply_user_fan_control_profile
@@ -214,7 +215,7 @@ while true; do
     echo "    Date & time      Inlet  CPU 1  CPU 2  Exhaust          Active fan speed profile          Third-party PCIe card Dell default cooling response  Comment"
     i=0
   fi
-  printf "%19s  %3d°C  %3d°C  %3s°C  %5s°C  %40s  %51s  %s\n" "$(date +"%d-%m-%Y %T")" $INLET_TEMPERATURE $CPU1_TEMPERATURE "$CPU2_TEMPERATURE" "$EXHAUST_TEMPERATURE" "$CURRENT_FAN_CONTROL_PROFILE" "$THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS" "$COMMENT"
+  printf "%19s  %3d°C  %3d°C  %3s°C  %5s°C  %40s  %51s  %s\n" "$(date +"%d-%m-%Y %T")" "$INLET_TEMPERATURE" "$CPU1_TEMPERATURE" "$CPU2_TEMPERATURE" "$EXHAUST_TEMPERATURE" "$CURRENT_FAN_CONTROL_PROFILE" "$THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS" "$COMMENT"
   ((i++))
   wait $SLEEP_PROCESS_PID
 done
