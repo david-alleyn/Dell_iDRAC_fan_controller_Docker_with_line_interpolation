@@ -1,0 +1,27 @@
+name: lint
+
+on:
+  push:
+    paths:
+      - '**.sh'
+      - '.github/workflows/lint.yml'
+  pull_request:
+    paths:
+      - '**.sh'
+      - '.github/workflows/lint.yml'
+
+jobs:
+  shellcheck-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: bash syntax check
+        run: bash -n Dell_iDRAC_fan_controller.sh functions.sh healthcheck.sh
+
+      - name: shellcheck
+        run: shellcheck -x Dell_iDRAC_fan_controller.sh functions.sh healthcheck.sh
+
+      - name: unit tests
+        run: tests/run.sh

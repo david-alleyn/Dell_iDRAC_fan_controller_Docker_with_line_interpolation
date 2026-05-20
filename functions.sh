@@ -32,6 +32,32 @@ function apply_fan_speed_interpolation_fan_control_profile () {
   apply_manual_fan_control_profile "Interpolated fan control profile" "$DECIMAL_CURRENT_FAN_SPEED" "$HEXADECIMAL_CURRENT_FAN_SPEED"
 }
 
+# Calculate interpolated fan speed for a given CPU temperature.
+# Linearly interpolates between LOWER_FAN at LOWER_TEMP and HIGHER_FAN at UPPER_TEMP,
+# clamping outside that range. Multiplication is performed before division to
+# preserve integer precision (unlike the broken upstream variant).
+# Usage : calculate_interpolated_fan_speed CPU_TEMP LOWER_TEMP UPPER_TEMP LOWER_FAN HIGHER_FAN
+# Echoes the resulting fan speed (decimal).
+function calculate_interpolated_fan_speed () {
+  local CPU_TEMP=$1
+  local LOWER_TEMP=$2
+  local UPPER_TEMP=$3
+  local LOWER_FAN=$4
+  local HIGHER_FAN=$5
+
+  # Degenerate or below-floor range: hold at the lower fan speed.
+  if [ "$CPU_TEMP" -le "$LOWER_TEMP" ] || [ "$UPPER_TEMP" -le "$LOWER_TEMP" ]; then
+    echo "$LOWER_FAN"
+    return
+  fi
+  # At or above the ceiling: clamp to higher fan speed.
+  if [ "$CPU_TEMP" -ge "$UPPER_TEMP" ]; then
+    echo "$HIGHER_FAN"
+    return
+  fi
+  echo $((LOWER_FAN + (HIGHER_FAN - LOWER_FAN) * (CPU_TEMP - LOWER_TEMP) / (UPPER_TEMP - LOWER_TEMP)))
+}
+
 # Convert DECIMAL_NUMBER to hexadecimal
 # Usage : convert_decimal_value_to_hexadecimal $DECIMAL_NUMBER
 # Returns : hexadecimal value of DECIMAL_NUMBER
