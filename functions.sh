@@ -23,6 +23,7 @@ function apply_Dell_fan_control_profile () {
     APPLIED_FAN_STATE="dell"
   else
     APPLIED_FAN_STATE=""
+    return 1
   fi
 }
 
@@ -186,19 +187,62 @@ function disable_third_party_PCIe_card_Dell_default_cooling_response () {
 #   fi
 # }
 
+# Run a command until it succeeds, up to MAX_ATTEMPTS times, waiting
+# DELAY_SECONDS between attempts. Returns the last attempt's exit status.
+# Usage : retry MAX_ATTEMPTS DELAY_SECONDS command [args...]
+function retry () {
+  local -r MAX_ATTEMPTS=$1
+  local -r DELAY_SECONDS=$2
+  shift 2
+  local ATTEMPT=1
+  local STATUS
+  while true
+  do
+    "$@"
+    STATUS=$?
+    if [ "$STATUS" -eq 0 ] || [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]
+    then
+      return "$STATUS"
+    fi
+    echo "Attempt $ATTEMPT/$MAX_ATTEMPTS of '$1' failed, retrying in ${DELAY_SECONDS}s..." >&2
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep "$DELAY_SECONDS"
+  done
+}
+
+# Number of attempts and delay for each restore command on exit. The iDRAC
+# regularly drops IPMI sessions, and a restore that silently fails would leave
+# the fans at a fixed manual speed with nothing controlling them.
+EXIT_RESTORE_ATTEMPTS=5
+EXIT_RESTORE_RETRY_DELAY=2
+
 # Prepare traps in case of container exit
 function graceful_exit () {
   echo "Gracefully exit"
+  local RESTORE_FAILED=false
+
   # Always send on exit, regardless of what we think was last applied.
   APPLIED_FAN_STATE=""
-  apply_Dell_fan_control_profile
+  if ! retry "$EXIT_RESTORE_ATTEMPTS" "$EXIT_RESTORE_RETRY_DELAY" apply_Dell_fan_control_profile
+  then
+    echo "/!\ ERROR /!\ Could not restore the Dell default dynamic fan control profile after $EXIT_RESTORE_ATTEMPTS attempts. The fans may be stuck at a fixed manual speed: check the iDRAC and restore automatic fan control manually." >&2
+    RESTORE_FAILED=true
+  fi
 
   # Reset third-party PCIe card cooling response to Dell default depending on the user's choice at startup
   if ! $KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT
   then
-    enable_third_party_PCIe_card_Dell_default_cooling_response
+    if ! retry "$EXIT_RESTORE_ATTEMPTS" "$EXIT_RESTORE_RETRY_DELAY" enable_third_party_PCIe_card_Dell_default_cooling_response
+    then
+      echo "/!\ ERROR /!\ Could not re-enable the third-party PCIe card Dell default cooling response after $EXIT_RESTORE_ATTEMPTS attempts." >&2
+      RESTORE_FAILED=true
+    fi
   fi
 
+  if $RESTORE_FAILED
+  then
+    exit 1
+  fi
   echo "/!\ WARNING /!\ Container stopped, Dell default dynamic fan control profile applied for safety."
   exit 0
 }

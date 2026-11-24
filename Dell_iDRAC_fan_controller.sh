@@ -120,11 +120,31 @@ else
   THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS="Enabled"
 fi
 
+# Wait for the CHECK_INTERVAL timer started at the beginning of this check.
+# Because the timer runs in the background while the check itself executes,
+# checks START every CHECK_INTERVAL seconds no matter how long the iDRAC query
+# takes, as long as it takes less than CHECK_INTERVAL. If it takes longer, the
+# next check starts immediately and the overrun is logged.
+# (wait, unlike a foreground sleep, lets SIGTERM/SIGINT run graceful_exit at once.)
+function wait_for_next_check () {
+  if ! kill -0 "$SLEEP_PROCESS_PID" 2>/dev/null
+  then
+    local -r ELAPSED_MS=$(( (${EPOCHREALTIME/./} - CHECK_START_US) / 1000 ))
+    echo "$(date +"%d-%m-%Y %T")  Warning: check took $((ELAPSED_MS / 1000)).$(printf '%03d' $((ELAPSED_MS % 1000)))s, longer than CHECK_INTERVAL (${CHECK_INTERVAL}s); starting next check immediately" >&2
+  fi
+  wait "$SLEEP_PROCESS_PID"
+}
+
 # Start monitoring
 while true; do
-  # Sleep for the specified interval before taking another reading
+  # Start the interval timer first, so the time the checks below take counts
+  # towards the interval instead of being added to it.
   sleep "$CHECK_INTERVAL" &
   SLEEP_PROCESS_PID=$!
+  # Microseconds since the epoch (EPOCHREALTIME without its decimal point)
+  CHECK_START_US=${EPOCHREALTIME/./}
+  # Timestamp of when this check started (what the table shows)
+  CHECK_TIME=$(date +"%d-%m-%Y %T")
 
   retrieve_temperatures $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
 
@@ -132,8 +152,8 @@ while true; do
   # truncated output...), leave the fans as they are and retry next interval.
   if ! temperatures_are_valid $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
   then
-    echo "$(date +"%d-%m-%Y %T")  Invalid temperature reading (Inlet='$INLET_TEMPERATURE' CPU1='$CPU1_TEMPERATURE' CPU2='$CPU2_TEMPERATURE' Exhaust='$EXHAUST_TEMPERATURE'), fan settings unchanged, retrying in ${CHECK_INTERVAL}s" >&2
-    wait $SLEEP_PROCESS_PID
+    echo "$CHECK_TIME  Invalid temperature reading (Inlet='$INLET_TEMPERATURE' CPU1='$CPU1_TEMPERATURE' CPU2='$CPU2_TEMPERATURE' Exhaust='$EXHAUST_TEMPERATURE'), fan settings unchanged, retrying in ${CHECK_INTERVAL}s" >&2
+    wait_for_next_check
     continue
   fi
 
@@ -200,7 +220,7 @@ while true; do
     echo "    Date & time      Inlet  CPU 1  CPU 2  Exhaust          Active fan speed profile          Third-party PCIe card Dell default cooling response  Comment"
     i=0
   fi
-  printf "%19s  %3d°C  %3d°C  %3s°C  %5s°C  %40s  %51s  %s\n" "$(date +"%d-%m-%Y %T")" "$INLET_TEMPERATURE" "$CPU1_TEMPERATURE" "$CPU2_TEMPERATURE" "$EXHAUST_TEMPERATURE" "$CURRENT_FAN_CONTROL_PROFILE" "$THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS" "$COMMENT"
+  printf "%19s  %3d°C  %3d°C  %3s°C  %5s°C  %40s  %51s  %s\n" "$CHECK_TIME" "$INLET_TEMPERATURE" "$CPU1_TEMPERATURE" "$CPU2_TEMPERATURE" "$EXHAUST_TEMPERATURE" "$CURRENT_FAN_CONTROL_PROFILE" "$THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS" "$COMMENT"
   ((i++))
-  wait $SLEEP_PROCESS_PID
+  wait_for_next_check
 done

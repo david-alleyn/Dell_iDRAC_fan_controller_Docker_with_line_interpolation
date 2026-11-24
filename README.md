@@ -193,6 +193,10 @@ Example of how interpolation works:
 
 When using fan speed interpolation, we recommend decreasing **CHECK_INTERVAL**, for example "3" (seconds), to avoid the noise nuisance associated with a sudden increase in fan speed.
 
+> **Note:** checks start every `CHECK_INTERVAL` seconds, but each check has to wait for the iDRAC to answer. If a query takes longer than `CHECK_INTERVAL` (a remote iDRAC can take 20-40s), the next check starts immediately and a warning is logged. Check how long queries take on your server before choosing a short interval.
+
+> **Note:** when the container stops, the controller restores Dell's default fan control, retrying up to 5 times if the iDRAC doesn't respond. Docker only waits **10 seconds** before force-killing a container, which may not be enough for those retries over the network. Give it more time with `docker run --stop-timeout 60 ...`, or `stop_grace_period: 60s` in Docker Compose.
+
 <p align="right">(<a href="#top">back to top</a>)</p>
 
 <!-- TROUBLESHOOTING -->

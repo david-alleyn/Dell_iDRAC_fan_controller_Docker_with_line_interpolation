@@ -114,6 +114,45 @@ apply_manual_fan_control_profile "P" 40 0x28
 assert_eq "after failure: full resend"        "raw 0x30 0x30 0x01 0x00|raw 0x30 0x30 0x02 0xff 0x28" "$(calls)"; IPMITOOL_CALLS=()
 unset -f ipmitool
 
+section "retry"
+ATTEMPTS_FILE=$(mktemp)
+# Fails until the Nth call, recording each call in ATTEMPTS_FILE.
+succeed_on () { echo x >> "$ATTEMPTS_FILE"; [ "$(wc -l < "$ATTEMPTS_FILE")" -ge "$1" ]; }
+: > "$ATTEMPTS_FILE"
+assert_eq "success first try: status 0"   "0" "$(retry 3 0 succeed_on 1 2>/dev/null; echo $?)"
+assert_eq "success first try: 1 call"     "1" "$(wc -l < "$ATTEMPTS_FILE")"
+: > "$ATTEMPTS_FILE"
+assert_eq "success on 3rd try: status 0"  "0" "$(retry 5 0 succeed_on 3 2>/dev/null; echo $?)"
+assert_eq "success on 3rd try: 3 calls"   "3" "$(wc -l < "$ATTEMPTS_FILE")"
+: > "$ATTEMPTS_FILE"
+assert_eq "never succeeds: status 1"      "1" "$(retry 4 0 succeed_on 99 2>/dev/null; echo $?)"
+assert_eq "never succeeds: 4 calls"       "4" "$(wc -l < "$ATTEMPTS_FILE")"
+
+section "graceful_exit retries the restore commands"
+# Each stubbed ipmitool call consumes one result from IPMITOOL_RESULTS_FILE
+# (0 = success, 1 = failure; success once the list runs out).
+IPMITOOL_RESULTS_FILE=$(mktemp)
+ipmitool () {
+  shift 2
+  echo "$*" >> "$ATTEMPTS_FILE"
+  local RESULT; RESULT=$(head -n 1 "$IPMITOOL_RESULTS_FILE")
+  sed -i 1d "$IPMITOOL_RESULTS_FILE"
+  return "${RESULT:-0}"
+}
+run_exit () { ( KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT=false; EXIT_RESTORE_RETRY_DELAY=0 graceful_exit ) > /dev/null 2>&1; echo $?; }
+
+: > "$ATTEMPTS_FILE"; printf '1\n1\n0\n1\n0\n' > "$IPMITOOL_RESULTS_FILE"
+assert_eq "transient failures: exit 0"         "0" "$(run_exit)"
+assert_eq "fan restore sent 3x"                "3" "$(grep -c '0x30 0x30 0x01 0x01' "$ATTEMPTS_FILE")"
+assert_eq "PCIe restore sent 2x"               "2" "$(grep -c '0x30 0xce' "$ATTEMPTS_FILE")"
+
+: > "$ATTEMPTS_FILE"; printf '1\n1\n1\n1\n1\n0\n' > "$IPMITOOL_RESULTS_FILE"
+assert_eq "fan restore never succeeds: exit 1" "1" "$(run_exit)"
+assert_eq "fan restore given up after 5"       "5" "$(grep -c '0x30 0x30 0x01 0x01' "$ATTEMPTS_FILE")"
+assert_eq "PCIe restore still attempted"       "1" "$(grep -c '0x30 0xce' "$ATTEMPTS_FILE")"
+unset -f ipmitool
+rm -f "$ATTEMPTS_FILE" "$IPMITOOL_RESULTS_FILE"
+
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n' "$PASS" "$FAIL"
 
 if [ "$FAIL" -gt 0 ]; then

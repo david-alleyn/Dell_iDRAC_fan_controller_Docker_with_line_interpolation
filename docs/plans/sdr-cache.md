@@ -111,7 +111,7 @@ temperature table matches readings taken without the cache.
 - **One long-running `ipmitool shell` session for the whole run.** There's no
   reliable way to tell where one command's output ends, idle sessions time out,
   and recovering from a dropped session in Bash is fragile.
-- **Changing `CHECK_INTERVAL`**: the user's decision is to keep it as is.
+- **Changing `CHECK_INTERVAL`**: already done separately (5s → 30s in the Dockerfile, Nov 2026). A live run showed each loop really took ~21s because of the slow read, so 5s was never achieved.
 - **Any Gen 14+ handling**: this fork only supports Gen 13.
 
 ## Risks
