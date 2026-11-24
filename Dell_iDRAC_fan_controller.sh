@@ -82,7 +82,16 @@ IS_DELL_FAN_CONTROL_PROFILE_APPLIED=true
 # Check present sensors
 IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT=true
 IS_CPU2_TEMPERATURE_SENSOR_PRESENT=true
+# Sensor presence is decided from this first read and never revisited, so a
+# failed read here would permanently disable CPU2/exhaust monitoring. Retry
+# until CPU1 reads as a number before deciding what's present.
 retrieve_temperatures $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
+until is_integer "$CPU1_TEMPERATURE"
+do
+  echo "Could not read CPU temperature from iDRAC, retrying in ${CHECK_INTERVAL}s..." >&2
+  sleep "$CHECK_INTERVAL"
+  retrieve_temperatures $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
+done
 if [ -z "$EXHAUST_TEMPERATURE" ]
 then
   echo "No exhaust temperature sensor detected."
@@ -118,6 +127,15 @@ while true; do
   SLEEP_PROCESS_PID=$!
 
   retrieve_temperatures $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
+
+  # If any reading isn't a number (IPMI session failure, sensor "No Reading",
+  # truncated output...), leave the fans as they are and retry next interval.
+  if ! temperatures_are_valid $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
+  then
+    echo "$(date +"%d-%m-%Y %T")  Invalid temperature reading (Inlet='$INLET_TEMPERATURE' CPU1='$CPU1_TEMPERATURE' CPU2='$CPU2_TEMPERATURE' Exhaust='$EXHAUST_TEMPERATURE'), fan settings unchanged, retrying in ${CHECK_INTERVAL}s" >&2
+    wait $SLEEP_PROCESS_PID
+    continue
+  fi
 
   # Initialize a variable to store the comments displayed when the fan control profile changed
   COMMENT=" -"

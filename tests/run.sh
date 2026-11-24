@@ -59,6 +59,61 @@ assert_eq "T=100 → 60"  "60" "$(calculate_interpolated_fan_speed 100 38 79 12 
 assert_eq "T1==T2 → F1" "10" "$(calculate_interpolated_fan_speed 50 50 50 10 40)"
 assert_eq "T1>T2 → F1"  "10" "$(calculate_interpolated_fan_speed 50 80 50 10 40)"
 
+section "is_integer"
+assert_eq "55 valid"        "0" "$(is_integer 55; echo $?)"
+assert_eq "100 valid"       "0" "$(is_integer 100; echo $?)"
+assert_eq "empty invalid"   "1" "$(is_integer ""; echo $?)"
+assert_eq "'-' invalid"     "1" "$(is_integer "-"; echo $?)"
+assert_eq "'4 5' invalid"   "1" "$(is_integer "4 5"; echo $?)"
+assert_eq "'-5' invalid"    "1" "$(is_integer "-5"; echo $?)"
+
+section "temperatures_are_valid"
+INLET_TEMPERATURE=22 CPU1_TEMPERATURE=55 CPU2_TEMPERATURE=50 EXHAUST_TEMPERATURE=35
+assert_eq "all valid"                 "0" "$(temperatures_are_valid true true; echo $?)"
+CPU1_TEMPERATURE=""
+assert_eq "empty CPU1"                "1" "$(temperatures_are_valid true true; echo $?)"
+CPU1_TEMPERATURE=55 CPU2_TEMPERATURE=""
+assert_eq "empty CPU2 (present)"      "1" "$(temperatures_are_valid true true; echo $?)"
+CPU2_TEMPERATURE="-"
+assert_eq "CPU2 '-' (absent)"         "0" "$(temperatures_are_valid true false; echo $?)"
+EXHAUST_TEMPERATURE=""
+assert_eq "empty exhaust (present)"   "1" "$(temperatures_are_valid true false; echo $?)"
+EXHAUST_TEMPERATURE="-"
+assert_eq "exhaust '-' (absent)"      "0" "$(temperatures_are_valid false false; echo $?)"
+INLET_TEMPERATURE=""
+assert_eq "empty inlet"               "1" "$(temperatures_are_valid false false; echo $?)"
+
+section "fan commands only sent on change"
+# Stub ipmitool: record the raw bytes of each call; fail when IPMITOOL_FAIL=1.
+IPMITOOL_ARGS=(-I stub)
+IPMITOOL_CALLS=()
+IPMITOOL_FAIL=0
+ipmitool () { shift 2; IPMITOOL_CALLS+=("$*"); [ "$IPMITOOL_FAIL" -eq 0 ]; }
+calls () { local IFS='|'; echo "${IPMITOOL_CALLS[*]}"; }
+
+APPLIED_FAN_STATE=""
+apply_manual_fan_control_profile "P" 31 0x1f
+assert_eq "unknown -> manual: enable + speed" "raw 0x30 0x30 0x01 0x00|raw 0x30 0x30 0x02 0xff 0x1f" "$(calls)"; IPMITOOL_CALLS=()
+apply_manual_fan_control_profile "P" 31 0x1f
+assert_eq "same speed: nothing sent"          "" "$(calls)"; IPMITOOL_CALLS=()
+assert_eq "label still updated"               "P (31%)" "$CURRENT_FAN_CONTROL_PROFILE"
+apply_manual_fan_control_profile "P" 32 0x20
+assert_eq "new speed: speed only"             "raw 0x30 0x30 0x02 0xff 0x20" "$(calls)"; IPMITOOL_CALLS=()
+apply_Dell_fan_control_profile
+assert_eq "manual -> Dell: one command"       "raw 0x30 0x30 0x01 0x01" "$(calls)"; IPMITOOL_CALLS=()
+apply_Dell_fan_control_profile
+assert_eq "Dell again: nothing sent"          "" "$(calls)"; IPMITOOL_CALLS=()
+apply_manual_fan_control_profile "P" 32 0x20
+assert_eq "Dell -> manual: enable + speed"    "raw 0x30 0x30 0x01 0x00|raw 0x30 0x30 0x02 0xff 0x20" "$(calls)"; IPMITOOL_CALLS=()
+IPMITOOL_FAIL=1
+apply_manual_fan_control_profile "P" 40 0x28
+assert_eq "failed write resets state"         "" "$APPLIED_FAN_STATE"
+IPMITOOL_CALLS=()
+IPMITOOL_FAIL=0
+apply_manual_fan_control_profile "P" 40 0x28
+assert_eq "after failure: full resend"        "raw 0x30 0x30 0x01 0x00|raw 0x30 0x30 0x02 0xff 0x28" "$(calls)"; IPMITOOL_CALLS=()
+unset -f ipmitool
+
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n' "$PASS" "$FAIL"
 
 if [ "$FAIL" -gt 0 ]; then

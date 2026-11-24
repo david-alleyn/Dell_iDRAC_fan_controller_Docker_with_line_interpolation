@@ -5,23 +5,76 @@
 # shellcheck disable=SC2034
 declare CURRENT_FAN_CONTROL_PROFILE INLET_TEMPERATURE EXHAUST_TEMPERATURE
 
+# Last fan state successfully written to the iDRAC, so commands are only sent
+# when the target actually changes:
+#   ""      unknown (startup, or the last write failed) -> next apply always sends
+#   "dell"  Dell default dynamic fan control profile
+#   <n>     manual fan control at <n>% (decimal)
+APPLIED_FAN_STATE=""
+
 # This function applies Dell's default dynamic fan control profile
 function apply_Dell_fan_control_profile () {
-  # Use ipmitool to send the raw command to set fan control to Dell default
-  ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x01 0x01 > /dev/null
   CURRENT_FAN_CONTROL_PROFILE="Dell default dynamic fan control profile"
+  if [ "$APPLIED_FAN_STATE" = "dell" ]; then
+    return 0
+  fi
+  # Use ipmitool to send the raw command to set fan control to Dell default
+  if ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x01 0x01 > /dev/null; then
+    APPLIED_FAN_STATE="dell"
+  else
+    APPLIED_FAN_STATE=""
+  fi
 }
 
 # Apply a manual (user-controlled) fan control profile at the given speed.
+# Only talks to the iDRAC when the speed differs from the last one applied, and
+# only re-enables manual mode when coming from Dell default (or unknown) state.
 # Usage: apply_manual_fan_control_profile <profile_label> <decimal_speed> <hex_speed>
 function apply_manual_fan_control_profile () {
   local PROFILE_LABEL=$1
   local DECIMAL_SPEED=$2
   local HEX_SPEED=$3
-  # Switch to manual fan control, then set the fan speed.
-  ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x01 0x00 > /dev/null
-  ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x02 0xff "$HEX_SPEED" > /dev/null
   CURRENT_FAN_CONTROL_PROFILE="$PROFILE_LABEL ($DECIMAL_SPEED%)"
+
+  if [ "$APPLIED_FAN_STATE" = "$DECIMAL_SPEED" ]; then
+    return 0
+  fi
+
+  # Switch to manual fan control unless we're already in it.
+  if [ -z "$APPLIED_FAN_STATE" ] || [ "$APPLIED_FAN_STATE" = "dell" ]; then
+    if ! ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x01 0x00 > /dev/null; then
+      APPLIED_FAN_STATE=""
+      return 1
+    fi
+  fi
+  # Set the fan speed.
+  if ipmitool "${IPMITOOL_ARGS[@]}" raw 0x30 0x30 0x02 0xff "$HEX_SPEED" > /dev/null; then
+    APPLIED_FAN_STATE="$DECIMAL_SPEED"
+  else
+    APPLIED_FAN_STATE=""
+    return 1
+  fi
+}
+
+# Returns 0 if the argument is a non-negative integer.
+function is_integer () {
+  [[ $1 =~ ^[0-9]+$ ]]
+}
+
+# Returns 0 if every temperature the controller expects was read as a number.
+# Usage : temperatures_are_valid $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
+function temperatures_are_valid () {
+  local IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT=$1
+  local IS_CPU2_TEMPERATURE_SENSOR_PRESENT=$2
+  is_integer "$INLET_TEMPERATURE" || return 1
+  is_integer "$CPU1_TEMPERATURE" || return 1
+  if $IS_CPU2_TEMPERATURE_SENSOR_PRESENT; then
+    is_integer "$CPU2_TEMPERATURE" || return 1
+  fi
+  if $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT; then
+    is_integer "$EXHAUST_TEMPERATURE" || return 1
+  fi
+  return 0
 }
 
 function apply_user_fan_control_profile () {
@@ -136,6 +189,8 @@ function disable_third_party_PCIe_card_Dell_default_cooling_response () {
 # Prepare traps in case of container exit
 function graceful_exit () {
   echo "Gracefully exit"
+  # Always send on exit, regardless of what we think was last applied.
+  APPLIED_FAN_STATE=""
   apply_Dell_fan_control_profile
 
   # Reset third-party PCIe card cooling response to Dell default depending on the user's choice at startup
