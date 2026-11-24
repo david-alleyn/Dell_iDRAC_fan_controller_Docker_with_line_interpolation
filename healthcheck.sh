@@ -9,4 +9,8 @@ set -uo pipefail
 
 set_iDRAC_login_args
 
-ipmitool "${IPMITOOL_ARGS[@]}" sdr type temperature
+# Use the controller's sensor list cache if it has built one (never build it
+# here: only the controller writes it).
+use_existing_sdr_cache
+
+ipmitool "${IPMITOOL_ARGS[@]}" "${SDR_CACHE_ARGS[@]}" sdr type temperature

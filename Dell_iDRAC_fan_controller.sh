@@ -58,6 +58,16 @@ fi
 echo "Server model: $SERVER_MANUFACTURER $SERVER_MODEL"
 echo "iDRAC/IPMI host: $IDRAC_HOST"
 
+# Cache the iDRAC sensor list so each temperature read only fetches the live
+# values (see build_sdr_cache). Never fatal: without it, reads are just slower.
+echo "Caching iDRAC sensor list (can take ~30s)..."
+if retry 3 5 build_sdr_cache
+then
+  echo "Sensor list cached in $SDR_CACHE_FILE."
+else
+  echo "/!\ Could not cache the iDRAC sensor list, continuing without it (slower temperature reads)." >&2
+fi
+
 # Log the fan speed objective, CPU temperature threshold and check interval
 echo "Fan speed interpolation enabled: $FAN_SPEED_INTERPOLATION_ENABLED"
 if $FAN_SPEED_INTERPOLATION_ENABLED
@@ -153,9 +163,11 @@ while true; do
   if ! temperatures_are_valid $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
   then
     echo "$CHECK_TIME  Invalid temperature reading (Inlet='$INLET_TEMPERATURE' CPU1='$CPU1_TEMPERATURE' CPU2='$CPU2_TEMPERATURE' Exhaust='$EXHAUST_TEMPERATURE'), fan settings unchanged, retrying in ${CHECK_INTERVAL}s" >&2
+    record_temperature_read_result invalid
     wait_for_next_check
     continue
   fi
+  record_temperature_read_result valid
 
   # Initialize a variable to store the comments displayed when the fan control profile changed
   COMMENT=" -"

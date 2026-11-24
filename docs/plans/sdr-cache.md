@@ -1,6 +1,18 @@
 # Plan: cache the iDRAC sensor list (SDR) to make temperature reads cheaper
 
-Status: proposed, not started.
+Status: implemented (Nov 2026).
+
+Step 1 result on the PowerEdge R630 (iDRAC over lanplus, 6 runs each):
+
+| | Typical | Range |
+|---|---|---|
+| `sdr type temperature` | ~18 s | 14.4-21.4 s |
+| with `-S` cache | ~0.1 s | 0.09-1.1 s |
+| `sdr dump` (once at startup) | 23 s | - |
+
+Output identical apart from the readings. One deviation from the plan below:
+startup tries the dump up to 3 times (5s apart) before falling back to
+uncached reads, since the iDRAC regularly drops a session during the dump.
 
 ## Problem
 

@@ -134,7 +134,7 @@ function retrieve_temperatures () {
   local IS_CPU2_TEMPERATURE_SENSOR_PRESENT=$2
 
   local DATA
-  DATA=$(ipmitool "${IPMITOOL_ARGS[@]}" sdr type temperature | grep degrees)
+  DATA=$(ipmitool "${IPMITOOL_ARGS[@]}" "${SDR_CACHE_ARGS[@]}" sdr type temperature | grep degrees)
 
   # Extract the digits immediately before " degrees C". This avoids the
   # earlier `\d{2}` regex which would have parsed 100°C as "10".
@@ -272,6 +272,74 @@ function get_Dell_server_model () {
 # Define functions to check if CPU 1 and CPU 2 temperatures are above the threshold
 function CPU1_OVERHEAT() { [ "$CPU1_TEMPERATURE" -gt "$CPU_TEMPERATURE_THRESHOLD" ]; }
 function CPU2_OVERHEAT() { [ "$CPU2_TEMPERATURE" -gt "$CPU_TEMPERATURE_THRESHOLD" ]; }
+
+# ---- SDR (sensor list) cache -------------------------------------------------
+# Without a cache, every "sdr type temperature" over lanplus re-downloads the
+# iDRAC's whole sensor list before reading any values: ~14-21s per read on an
+# R630. With the list cached locally (ipmitool -S), only the live readings are
+# fetched: ~0.1s. The list only changes with hardware/firmware changes, so it
+# is dumped once at startup and rebuilt if reads keep failing.
+SDR_CACHE_FILE=${SDR_CACHE_FILE:-/tmp/idrac_sdr.cache}
+# Extra ipmitool arguments for sdr reads: (-S file) when the cache is in use.
+SDR_CACHE_ARGS=()
+# Rebuild the cache after this many invalid reads in a row while it's in use.
+SDR_CACHE_REBUILD_AFTER_INVALID_READS=3
+CONSECUTIVE_INVALID_READS=0
+
+# Dump the iDRAC sensor list to SDR_CACHE_FILE and start using it. Writes to a
+# temporary file first and moves it into place only if the dump succeeded and
+# isn't empty, so readers (e.g. the healthcheck) never see a partial file.
+# Returns non-zero, and deletes/stops using any cache, if the dump fails.
+function build_sdr_cache () {
+  local -r TEMPORARY_FILE="$SDR_CACHE_FILE.tmp.$$"
+  if ipmitool "${IPMITOOL_ARGS[@]}" sdr dump "$TEMPORARY_FILE" > /dev/null &&
+     [ -s "$TEMPORARY_FILE" ] &&
+     mv -f "$TEMPORARY_FILE" "$SDR_CACHE_FILE"
+  then
+    SDR_CACHE_ARGS=(-S "$SDR_CACHE_FILE")
+    return 0
+  fi
+  # Also remove any older cache, so the healthcheck stops using it too.
+  rm -f "$TEMPORARY_FILE" "$SDR_CACHE_FILE"
+  SDR_CACHE_ARGS=()
+  return 1
+}
+
+# Use an existing cache file without building one (for the healthcheck,
+# which must never write the cache itself).
+function use_existing_sdr_cache () {
+  if [ -s "$SDR_CACHE_FILE" ]
+  then
+    SDR_CACHE_ARGS=(-S "$SDR_CACHE_FILE")
+  else
+    SDR_CACHE_ARGS=()
+  fi
+}
+
+# Record the result of a temperature read. After
+# SDR_CACHE_REBUILD_AFTER_INVALID_READS invalid reads in a row while the cache
+# is in use, assume it may be stale (hardware/firmware change) and rebuild it,
+# falling back to uncached reads if the rebuild fails.
+# Usage : record_temperature_read_result valid|invalid
+function record_temperature_read_result () {
+  if [ "$1" = "valid" ]
+  then
+    CONSECUTIVE_INVALID_READS=0
+    return 0
+  fi
+  CONSECUTIVE_INVALID_READS=$((CONSECUTIVE_INVALID_READS + 1))
+  if [ "${#SDR_CACHE_ARGS[@]}" -gt 0 ] && [ "$CONSECUTIVE_INVALID_READS" -ge "$SDR_CACHE_REBUILD_AFTER_INVALID_READS" ]
+  then
+    echo "$CONSECUTIVE_INVALID_READS invalid temperature reads in a row, rebuilding the iDRAC sensor list cache in case it is stale..." >&2
+    CONSECUTIVE_INVALID_READS=0
+    if build_sdr_cache
+    then
+      echo "Sensor list cache rebuilt." >&2
+    else
+      echo "/!\ Could not rebuild the sensor list cache, continuing without it (slower reads)." >&2
+    fi
+  fi
+}
 
 # Populate the global IPMITOOL_ARGS array based on IDRAC_HOST. Used by both
 # the main controller and the healthcheck so the LAN/local setup stays

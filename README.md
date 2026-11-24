@@ -193,7 +193,9 @@ Example of how interpolation works:
 
 When using fan speed interpolation, we recommend decreasing **CHECK_INTERVAL**, for example "3" (seconds), to avoid the noise nuisance associated with a sudden increase in fan speed.
 
-> **Note:** checks start every `CHECK_INTERVAL` seconds, but each check has to wait for the iDRAC to answer. If a query takes longer than `CHECK_INTERVAL` (a remote iDRAC can take 20-40s), the next check starts immediately and a warning is logged. Check how long queries take on your server before choosing a short interval.
+> **Note:** checks start every `CHECK_INTERVAL` seconds, but each check has to wait for the iDRAC to answer. If a query takes longer than `CHECK_INTERVAL`, the next check starts immediately and a warning is logged.
+
+> **Note:** at startup the controller caches the iDRAC's sensor list (takes ~20-30s over the network), so each temperature read only fetches the live values: on a PowerEdge R630 this cut a read from ~18s to ~0.1s. Restarting the container rebuilds the cache. If reads fail 3 times in a row, the cache is rebuilt automatically; if it can't be built, the controller keeps working with slower, uncached reads. Set `SDR_CACHE_FILE` to change where it's stored (default `/tmp/idrac_sdr.cache`).
 
 > **Note:** when the container stops, the controller restores Dell's default fan control, retrying up to 5 times if the iDRAC doesn't respond. Docker only waits **10 seconds** before force-killing a container, which may not be enough for those retries over the network. Give it more time with `docker run --stop-timeout 60 ...`, or `stop_grace_period: 60s` in Docker Compose.
 

@@ -153,6 +153,90 @@ assert_eq "PCIe restore still attempted"       "1" "$(grep -c '0x30 0xce' "$ATTE
 unset -f ipmitool
 rm -f "$ATTEMPTS_FILE" "$IPMITOOL_RESULTS_FILE"
 
+section "SDR cache"
+CACHE_DIR=$(mktemp -d)
+SDR_CACHE_FILE="$CACHE_DIR/sdr.cache"
+IPMITOOL_ARGS=(-I stub)
+CALLS_FILE="$CACHE_DIR/calls"
+# ipmitool runs inside $(...) subshells, so calls are recorded in a file.
+reset_calls () { : > "$CALLS_FILE"; }
+first_call () { head -n 1 "$CALLS_FILE"; }
+reset_calls
+# DUMP_MODE: ok = write a cache file, empty = succeed but write nothing, fail = exit 1
+DUMP_MODE=ok
+ipmitool () {
+  shift 2
+  echo "$*" >> "$CALLS_FILE"
+  if [ "$1 $2" = "sdr dump" ]
+  then
+    case $DUMP_MODE in
+      ok) echo "sdr data" > "$3" ;;
+      empty) : > "$3" ;;
+      fail) echo "partial" > "$3"; return 1 ;;
+    esac
+    return 0
+  fi
+  printf 'Temp | 0Eh | ok | 3.1 | 45 degrees C\n'
+}
+
+DUMP_MODE=ok
+assert_eq "dump ok: status 0"               "0" "$(build_sdr_cache; echo $?)"
+build_sdr_cache
+assert_eq "dump ok: cache args set"         "-S $SDR_CACHE_FILE" "${SDR_CACHE_ARGS[*]}"
+assert_eq "dump ok: file in place"          "sdr data" "$(cat "$SDR_CACHE_FILE")"
+assert_eq "dump ok: no temp file left"      "1" "$(find "$CACHE_DIR" -type f ! -name calls | wc -l)"
+reset_calls
+retrieve_temperatures false false
+assert_eq "read uses -S when cached"        "-S $SDR_CACHE_FILE sdr type temperature" "$(first_call)"
+assert_eq "read parses CPU1 with cache"     "45" "$CPU1_TEMPERATURE"
+
+DUMP_MODE=fail
+build_sdr_cache
+assert_eq "dump fails: status 1"            "1" "$(build_sdr_cache; echo $?)"
+assert_eq "dump fails: cache args cleared"  "" "${SDR_CACHE_ARGS[*]}"
+assert_eq "dump fails: old cache removed"   "0" "$(find "$CACHE_DIR" -type f ! -name calls | wc -l)"
+reset_calls
+retrieve_temperatures false false
+assert_eq "read without -S when uncached"   "sdr type temperature" "$(first_call)"
+
+rm -f "$SDR_CACHE_FILE"; DUMP_MODE=empty
+assert_eq "empty dump: status 1"            "1" "$(build_sdr_cache; echo $?)"
+assert_eq "empty dump: no file left"        "0" "$(find "$CACHE_DIR" -type f ! -name calls | wc -l)"
+
+section "use_existing_sdr_cache (healthcheck)"
+rm -f "$SDR_CACHE_FILE"
+use_existing_sdr_cache
+assert_eq "no cache file: no -S"            "" "${SDR_CACHE_ARGS[*]}"
+echo "sdr data" > "$SDR_CACHE_FILE"
+reset_calls
+use_existing_sdr_cache
+assert_eq "cache file: -S"                  "-S $SDR_CACHE_FILE" "${SDR_CACHE_ARGS[*]}"
+assert_eq "never runs ipmitool"             "0" "$(wc -l < "$CALLS_FILE")"
+
+section "stale cache rebuild"
+DUMP_MODE=ok; build_sdr_cache; CONSECUTIVE_INVALID_READS=0
+dump_count () { grep -c '^sdr dump' "$CALLS_FILE"; }
+reset_calls
+record_temperature_read_result invalid 2>/dev/null
+record_temperature_read_result invalid 2>/dev/null
+assert_eq "2 invalid: no rebuild"           "0" "$(dump_count)"
+record_temperature_read_result valid
+record_temperature_read_result invalid 2>/dev/null
+record_temperature_read_result invalid 2>/dev/null
+assert_eq "valid read resets the count"     "0" "$(dump_count)"
+record_temperature_read_result invalid 2>/dev/null
+assert_eq "3 in a row: one rebuild"         "1" "$(dump_count)"
+assert_eq "count reset after rebuild"       "0" "$CONSECUTIVE_INVALID_READS"
+DUMP_MODE=fail
+reset_calls
+for _ in 1 2 3; do record_temperature_read_result invalid 2>/dev/null; done
+assert_eq "failed rebuild: falls back"      "" "${SDR_CACHE_ARGS[*]}"
+reset_calls
+for _ in 1 2 3 4 5 6; do record_temperature_read_result invalid 2>/dev/null; done
+assert_eq "no cache: never rebuilds"        "0" "$(dump_count)"
+unset -f ipmitool
+rm -rf "$CACHE_DIR"
+
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n' "$PASS" "$FAIL"
 
 if [ "$FAIL" -gt 0 ]; then
