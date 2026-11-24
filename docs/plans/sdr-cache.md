@@ -90,6 +90,8 @@ hardware change while the container is running):
 
 ### 5. Healthcheck (`healthcheck.sh`)
 
+*Superseded: the Docker healthcheck was removed entirely afterwards (Nov 2026), so this step no longer applies.*
+
 - If `$SDR_CACHE_FILE` exists, pass `-S` to it as well. The healthcheck runs in
   the same container, so it can read the same file.
 - If the file is missing, run without `-S`. The healthcheck must never build the

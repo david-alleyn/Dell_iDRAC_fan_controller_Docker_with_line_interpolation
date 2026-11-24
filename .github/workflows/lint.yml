@@ -18,10 +18,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: bash syntax check
-        run: bash -n Dell_iDRAC_fan_controller.sh functions.sh healthcheck.sh
+        run: bash -n Dell_iDRAC_fan_controller.sh functions.sh
 
       - name: shellcheck
-        run: shellcheck -x Dell_iDRAC_fan_controller.sh functions.sh healthcheck.sh
+        run: shellcheck -x Dell_iDRAC_fan_controller.sh functions.sh
 
       - name: unit tests
         run: tests/run.sh

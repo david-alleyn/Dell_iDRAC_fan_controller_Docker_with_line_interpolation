@@ -288,7 +288,7 @@ CONSECUTIVE_INVALID_READS=0
 
 # Dump the iDRAC sensor list to SDR_CACHE_FILE and start using it. Writes to a
 # temporary file first and moves it into place only if the dump succeeded and
-# isn't empty, so readers (e.g. the healthcheck) never see a partial file.
+# isn't empty, so a partial dump is never used.
 # Returns non-zero, and deletes/stops using any cache, if the dump fails.
 function build_sdr_cache () {
   local -r TEMPORARY_FILE="$SDR_CACHE_FILE.tmp.$$"
@@ -299,21 +299,10 @@ function build_sdr_cache () {
     SDR_CACHE_ARGS=(-S "$SDR_CACHE_FILE")
     return 0
   fi
-  # Also remove any older cache, so the healthcheck stops using it too.
+  # Also remove any older cache, so a stale file isn't left behind.
   rm -f "$TEMPORARY_FILE" "$SDR_CACHE_FILE"
   SDR_CACHE_ARGS=()
   return 1
-}
-
-# Use an existing cache file without building one (for the healthcheck,
-# which must never write the cache itself).
-function use_existing_sdr_cache () {
-  if [ -s "$SDR_CACHE_FILE" ]
-  then
-    SDR_CACHE_ARGS=(-S "$SDR_CACHE_FILE")
-  else
-    SDR_CACHE_ARGS=()
-  fi
 }
 
 # Record the result of a temperature read. After
@@ -341,9 +330,7 @@ function record_temperature_read_result () {
   fi
 }
 
-# Populate the global IPMITOOL_ARGS array based on IDRAC_HOST. Used by both
-# the main controller and the healthcheck so the LAN/local setup stays
-# consistent across entry points.
+# Populate the global IPMITOOL_ARGS array based on IDRAC_HOST.
 function set_iDRAC_login_args () {
   if [[ $IDRAC_HOST == "local" ]]
   then

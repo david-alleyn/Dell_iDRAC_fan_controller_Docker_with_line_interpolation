@@ -203,16 +203,6 @@ rm -f "$SDR_CACHE_FILE"; DUMP_MODE=empty
 assert_eq "empty dump: status 1"            "1" "$(build_sdr_cache; echo $?)"
 assert_eq "empty dump: no file left"        "0" "$(find "$CACHE_DIR" -type f ! -name calls | wc -l)"
 
-section "use_existing_sdr_cache (healthcheck)"
-rm -f "$SDR_CACHE_FILE"
-use_existing_sdr_cache
-assert_eq "no cache file: no -S"            "" "${SDR_CACHE_ARGS[*]}"
-echo "sdr data" > "$SDR_CACHE_FILE"
-reset_calls
-use_existing_sdr_cache
-assert_eq "cache file: -S"                  "-S $SDR_CACHE_FILE" "${SDR_CACHE_ARGS[*]}"
-assert_eq "never runs ipmitool"             "0" "$(wc -l < "$CALLS_FILE")"
-
 section "stale cache rebuild"
 DUMP_MODE=ok; build_sdr_cache; CONSECUTIVE_INVALID_READS=0
 dump_count () { grep -c '^sdr dump' "$CALLS_FILE"; }
